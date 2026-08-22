@@ -62,14 +62,13 @@ dependencies {
 publishing {
     repositories {
         maven {
-            name = "GitLab"
-            url = uri("https://gitlab-eu.avrioc.io/api/v4/projects/${findProperty("gitlabProjectId") ?: System.getenv("GITLAB_PROJECT_ID")}/packages/maven")
-            credentials(HttpHeaderCredentials::class) {
-                name = if (System.getenv("CI_JOB_TOKEN") != null) "Job-Token" else "Private-Token"
-                value = System.getenv("CI_JOB_TOKEN") ?: findProperty("gitlabToken") as String? ?: System.getenv("GITLAB_TOKEN") ?: ""
-            }
-            authentication {
-                create<HttpHeaderAuthentication>("header")
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/voxera-voice/voxera-android")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR")
+                    ?: findProperty("gpr.user") as String? ?: ""
+                password = System.getenv("GITHUB_TOKEN")
+                    ?: findProperty("gpr.token") as String? ?: ""
             }
         }
     }

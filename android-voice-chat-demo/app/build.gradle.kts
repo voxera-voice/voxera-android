@@ -29,14 +29,6 @@ dependencies {
     // ROCS Voice SDK (local) — uses stripped mediasoup-client (no bundled WebRTC)
     implementation(project(":sdk-android"))
 
-    // Comera Jitsi Meet SDK — package 1223
-    // https://gitlab.avrioc.io/comera/jitsi-sdk/conference-sdk-android-releases/-/packages/1223
-    // TODO: uncomment and replace TODO_VERSION with the actual version
-    // implementation("org.jitsi.react:jitsi-meet-sdk:TODO_VERSION") {
-    //     exclude(group = "io.github.webrtc-sdk", module = "android")
-    //     exclude(group = "org.webrtc", module = "google-webrtc")
-    // }
-
     // Jetpack Compose BOM
     val composeBom = platform("androidx.compose:compose-bom:2024.09.00")
     implementation(composeBom)

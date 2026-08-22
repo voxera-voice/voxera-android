@@ -15,11 +15,11 @@ Kotlin SDK for the Voxera Voice Platform. New integrations should import
 
 ## Installation
 
-### From GitLab Package Registry
+### From GitHub Packages
 
-The SDK is published to the [GitLab Package Registry](https://gitlab-eu.avrioc.io/ai/sdk/voxera/android/-/packages).
+The SDK is published to [GitHub Packages](https://github.com/voxera-voice/voxera-android/packages).
 
-**1. Add the GitLab Maven repository** to your project-level `settings.gradle.kts`:
+**1. Add the GitHub Packages Maven repository** to your project-level `settings.gradle.kts`:
 
 ```kotlin
 dependencyResolutionManagement {
@@ -27,24 +27,24 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven {
-            url = uri("https://gitlab-eu.avrioc.io/api/v4/projects/838/packages/maven")
-            credentials(HttpHeaderCredentials::class) {
-                name = "Private-Token"
-                value = providers.gradleProperty("gitlabToken").orNull
-                    ?: System.getenv("GITLAB_TOKEN") ?: ""
-            }
-            authentication {
-                create<HttpHeaderAuthentication>("header")
+            url = uri("https://maven.pkg.github.com/voxera-voice/voxera-android")
+            credentials {
+                username = providers.gradleProperty("gpr.user").orNull
+                    ?: System.getenv("GITHUB_ACTOR") ?: ""
+                password = providers.gradleProperty("gpr.token").orNull
+                    ?: System.getenv("GITHUB_TOKEN") ?: ""
             }
         }
     }
 }
 ```
 
-**2. Store your token** in `~/.gradle/gradle.properties` (do **not** commit this):
+**2. Store your token** in `~/.gradle/gradle.properties` (do **not** commit this).
+The token needs the `read:packages` scope:
 
 ```properties
-gitlabToken=glpat-xxxxxxxxxxxxxxxxxxxx
+gpr.user=<your-github-username>
+gpr.token=ghp_xxxxxxxxxxxxxxxxxxxx
 ```
 
 **3. Add the dependency** to your module's `build.gradle.kts`:
@@ -554,16 +554,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
 ## Publishing a New Version
 
-To publish the SDK to the GitLab Package Registry, set your GitLab token and run the publish task from the SDK root:
+To publish the SDK to GitHub Packages, set your GitHub token (needs the
+`write:packages` scope) and run the publish task from the SDK root:
 
 ```bash
-# Using an environment variable
-export GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
-./gradlew publishReleasePublicationToGitLabRepository
+# Using environment variables
+export GITHUB_ACTOR=<your-github-username>
+export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+./gradlew publishReleasePublicationToGitHubPackagesRepository
 
 # Or store permanently in ~/.gradle/gradle.properties
-# gitlabToken=glpat-xxxxxxxxxxxxxxxxxxxx
-./gradlew publishReleasePublicationToGitLabRepository
+# gpr.user=<your-github-username>
+# gpr.token=ghp_xxxxxxxxxxxxxxxxxxxx
+./gradlew publishReleasePublicationToGitHubPackagesRepository
 ```
 
 To bump the version before publishing, update `version` in `build.gradle.kts`:
@@ -578,7 +581,7 @@ publications {
 }
 ```
 
-Published packages are visible at: https://gitlab-eu.avrioc.io/ai/sdk/voxera/android/-/packages
+Published packages are visible at: https://github.com/voxera-voice/voxera-android/packages
 
 ---
 

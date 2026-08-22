@@ -860,6 +860,7 @@ class RocsClient(
         config.workspaceId?.let   { put("workspaceId", it) }
         config.username?.let      { put("username", it) }
         config.userInfo?.let      { put("userInfo", JSONObject(it)) }
+        config.metadata?.takeIf { it.isNotEmpty() }?.let { put("metadata", JSONObject(it)) }
         val iso8601 = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US)
         iso8601.timeZone = java.util.TimeZone.getDefault()
         put("clientDateTime", iso8601.format(java.util.Date()))
