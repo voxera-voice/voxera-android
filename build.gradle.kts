@@ -4,6 +4,10 @@ plugins {
     id("maven-publish")
 }
 
+// Must match the version the React Native and Flutter bridges pin, and the
+// tag pushed to voxera-voice/voxera-android. Three places, one value.
+val voxeraVersion = "1.1.42"
+
 android {
     namespace = "com.voxera.sdk"
     compileSdk = 34
@@ -76,9 +80,44 @@ publishing {
         create<MavenPublication>("release") {
             groupId = "com.voxera"
             artifactId = "voxera-sdk-android"
-            version = "1.1.42"
+            version = voxeraVersion
             afterEvaluate {
                 from(components["release"])
+            }
+
+            // Without this the generated POM carries only coordinates and
+            // dependencies. Gradle resolves that fine, but every human-facing
+            // surface — the GitHub Packages listing, dependency reports,
+            // licence scanners in a customer's build — shows an unnamed,
+            // unlicensed artifact.
+            pom {
+                name.set("Voxera Android SDK")
+                description.set(
+                    "Native Android client for the Voxera realtime voice and video platform."
+                )
+                url.set("https://voxera-voice.com")
+
+                licenses {
+                    license {
+                        name.set("Voxera Commercial License")
+                        url.set("https://github.com/voxera-voice/voxera-android/blob/main/LICENSE")
+                        distribution.set("repo")
+                    }
+                }
+
+                developers {
+                    developer {
+                        id.set("voxera")
+                        name.set("Voxera")
+                        email.set("support@voxera.ai")
+                    }
+                }
+
+                scm {
+                    url.set("https://github.com/voxera-voice/voxera-android")
+                    connection.set("scm:git:https://github.com/voxera-voice/voxera-android.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/voxera-voice/voxera-android.git")
+                }
             }
         }
     }
