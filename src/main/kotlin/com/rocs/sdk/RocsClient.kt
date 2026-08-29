@@ -199,9 +199,11 @@ class RocsClient(
 
     fun selectAction(message: String, actionId: String) {
         if (!isConnected) throw RocsException("Not connected", RocsErrorCode.CONNECTION_FAILED)
+        // `event` is echoed for older servers only; the current gateway reads
+        // just `action_id` and `message`.
         signaling.emit("select-actions", JSONObject().apply {
             put("message", message)
-            put("event", "justin_action_output")
+            put("event", "tool-output")
             put("action_id", actionId)
         })
     }
