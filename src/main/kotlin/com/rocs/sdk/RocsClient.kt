@@ -799,7 +799,7 @@ class RocsClient(
                 listener?.onMeetingEvent("bookmark-removed", d)
             }
         }
-        signaling.onJustinAction = { d ->
+        signaling.onToolTriggered = { d ->
             val content = d.optJSONObject("content")
             if (content != null) {
                 val actionId = content.optString("action_id", "")
