@@ -143,10 +143,8 @@ client.disconnect()
 
 Use this flow when the assistant calls a tool and you need to send back its output.
 
-The server emits the call under the canonical name `tool-triggered` and, for
-clients built before the rename, also under the legacy alias `justin_action`.
-The SDK subscribes to both and delivers each call once, so nothing extra is
-needed here.
+The server emits the call as `tool-triggered`. The SDK subscribes to it and
+hands you the payload; nothing extra is needed here.
 
 ### 1) Receive the tool call
 

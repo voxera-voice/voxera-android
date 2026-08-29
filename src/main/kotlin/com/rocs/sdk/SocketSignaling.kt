@@ -56,34 +56,8 @@ class SocketSignaling(private val serverUrl: String) {
     var onMinutesGenerated:     ((JSONObject) -> Unit)? = null
     var onBookmarkAdded:        ((JSONObject) -> Unit)? = null
     var onBookmarkRemoved:      ((JSONObject) -> Unit)? = null
-    /** The assistant called a tool. Named `onJustinAction` until the wire
-     *  event `justin_action` gained its canonical name `tool-triggered`. */
+    /** The assistant called a tool. */
     var onToolTriggered:        ((JSONObject) -> Unit)? = null
-
-    /**
-     * Action ids already delivered, so the canonical tool event and its legacy
-     * alias do not both reach the client for one call.
-     *
-     * Synchronised because Socket.IO dispatches on its own IO thread and the
-     * two copies of a call arrive back to back — the exact case an unguarded
-     * check would let through.
-     */
-    private val seenToolActionIds = LinkedHashSet<String>()
-    private val seenToolActionLimit = 256
-
-    /** True the first time an id is seen. An empty id is always allowed: there
-     *  is nothing to match on, and dropping it would lose a real tool call. */
-    @Synchronized
-    private fun isNewToolAction(id: String): Boolean {
-        if (id.isEmpty()) return true
-        if (!seenToolActionIds.add(id)) return false
-        while (seenToolActionIds.size > seenToolActionLimit) {
-            val oldest = seenToolActionIds.iterator()
-            oldest.next()
-            oldest.remove()
-        }
-        return true
-    }
     var onVolumeChanged:          ((volume: Double, isAI: Boolean) -> Unit)? = null
     var onSearching:             ((JSONObject) -> Unit)? = null
     var onClearAction:           ((List<String>, String) -> Unit)? = null
@@ -238,6 +212,7 @@ class SocketSignaling(private val serverUrl: String) {
             "minutes-generated"     to { d -> onMinutesGenerated?.invoke(d) },
             "bookmark-added"        to { d -> onBookmarkAdded?.invoke(d) },
             "bookmark-removed"      to { d -> onBookmarkRemoved?.invoke(d) },
+            "tool-triggered"        to { d -> onToolTriggered?.invoke(d) },
             "searching"             to { d -> onSearching?.invoke(d) },
         )
         for ((event, handler) in events) {
@@ -247,18 +222,6 @@ class SocketSignaling(private val serverUrl: String) {
             }
         }
 
-        // Tool calls arrive under the canonical name and the legacy alias, so
-        // that clients built before the rename keep working. This SDK sees
-        // every call twice and drops the second copy: a duplicate would be
-        // answered with a second tool output for an action the server has
-        // already had an answer for.
-        for (toolEvent in listOf("tool-triggered", "justin_action")) {
-            socket.on(toolEvent) { args ->
-                val d = args.firstOrNull() as? JSONObject ?: JSONObject()
-                val actionId = d.optJSONObject("content")?.optString("action_id").orEmpty()
-                if (isNewToolAction(actionId)) onToolTriggered?.invoke(d)
-            }
-        }
 
         // clear_action has a different signature — handled separately
         socket.on("clear_action") { args ->

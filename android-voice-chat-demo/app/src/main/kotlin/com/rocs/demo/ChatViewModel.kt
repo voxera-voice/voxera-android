@@ -257,7 +257,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun selectAction(message: String, actionId: String) {
         val payload = JSONObject().apply {
             put("message", message)
-            put("event", "justin_action_output")
+            put("event", "tool-output")
             put("action_id", actionId)
         }.toString(2)
         client?.selectAction(message, actionId)

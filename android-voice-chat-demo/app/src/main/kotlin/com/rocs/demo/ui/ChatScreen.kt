@@ -306,7 +306,7 @@ private fun ActiveCallScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text("Actions", color = SlateLight, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                    val justinJson = remember(state.toolCalls, state.toolCallsMessageId) {
+                    val toolCallJson = remember(state.toolCalls, state.toolCallsMessageId) {
                         toolCallsToJson(state.toolCalls, state.toolCallsMessageId)
                     }
                     Box(
@@ -318,7 +318,7 @@ private fun ActiveCallScreen(
                             .padding(8.dp)
                     ) {
                         SelectionContainer {
-                            Text(justinJson, color = Green, fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                            Text(toolCallJson, color = Green, fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                         }
                     }
                     state.toolCalls.forEach { tool ->
@@ -631,7 +631,7 @@ private fun toolCallsToJson(tools: List<ToolCall>, messageId: String): String {
         val tool = tools.firstOrNull() ?: return "{}"
         val parsedArgs = tool.function.arguments
         JSONObject().apply {
-            put("type", "justin_action")
+            put("type", "tool-triggered")
             put("content", JSONObject().apply {
                 put("action_id", tool.id)
                 put("name", tool.function.name)
