@@ -123,4 +123,14 @@ data class RocsConfig(
     val username: String? = null,
     /** Additional context/metadata about the user — appended to the AI system prompt. */
     val userInfo: Map<String, String>? = null,
+    /**
+     * Conversation language: a BCP-47 tag such as `"ar"`, `"ar-EG"` or
+     * `"fr-CA"`, or `"auto"` to detect it from the caller's speech and reply in
+     * the same language.
+     *
+     * `Locale.getDefault().language` is usually the right value for an app that
+     * follows the device. Leaving this null keeps whatever the published agent
+     * was configured with.
+     */
+    val language: String? = null,
 )

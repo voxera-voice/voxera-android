@@ -211,8 +211,21 @@ This sends:
 | `serverUrl` | `String` | — | **Required.** Media server URL. |
 | `userId` | `String?` | `null` | User identifier for session continuity. |
 | `threadId` | `String?` | `null` | Thread identifier for conversation continuity. |
-| `selectedVoice` | `String?` | `null` | TTS voice identifier. | `username` | `String?` | `null` | Display name of the person speaking — passed to the AI in the system prompt. |
+| `selectedVoice` | `String?` | `null` | TTS voice identifier. |
+| `username` | `String?` | `null` | Display name of the person speaking — passed to the AI in the system prompt. |
 | `userInfo` | `Map<String, Any>?` | `null` | Additional context/metadata about the user — appended to the AI system prompt. |
+| `language` | `String?` | `null` | BCP-47 tag (`"ar"`, `"fr-CA"`) or `"auto"`. See below. |
+
+### Language
+
+The agent answers in whatever language the caller speaks, and follows them if
+they switch mid-call. Nothing to configure.
+
+Set `language` when you already know it — `Locale.getDefault().toLanguageTag()`
+usually is that answer. A tag makes speech-to-text more accurate and slightly
+faster, because it no longer has to work the language out from the first moment
+of audio. `"auto"` asks for detection explicitly, which is also how you
+override an agent that was pinned to the wrong language.
 ## API Reference
 
 ### `VoxeraClient`
