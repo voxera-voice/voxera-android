@@ -155,7 +155,7 @@ override fun onToolCalls(tools: List<ToolCall>, messageId: String) {
         val action = tools.firstOrNull() ?: return
         val actionId = action.id
         val name = action.function.name
-        val argumentsJson = action.function.arguments // JSON string
+        val arguments = action.function.arguments // JSONObject, already parsed
 }
 ```
 
