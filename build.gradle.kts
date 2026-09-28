@@ -6,7 +6,7 @@ plugins {
 
 // Must match the version the React Native and Flutter bridges pin, and the
 // tag pushed to voxera-voice/voxera-android. Three places, one value.
-val voxeraVersion = "1.1.42"
+val voxeraVersion = "1.1.43"
 
 android {
     namespace = "com.voxera.sdk"
@@ -64,22 +64,14 @@ dependencies {
 }
 
 publishing {
-    repositories {
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/voxera-voice/voxera-android")
-            credentials {
-                username = System.getenv("GITHUB_ACTOR")
-                    ?: findProperty("gpr.user") as String? ?: ""
-                password = System.getenv("GITHUB_TOKEN")
-                    ?: findProperty("gpr.token") as String? ?: ""
-            }
-        }
-    }
     publications {
         create<MavenPublication>("release") {
-            groupId = "com.voxera"
-            artifactId = "voxera-sdk-android"
+            // Distributed through JitPack, which builds this repository at a
+            // tag and serves it without an account or token — GitHub Packages,
+            // used before, required a token even to download a public package.
+            // These coordinates are the ones JitPack serves for this repo.
+            groupId = "com.github.voxera-voice"
+            artifactId = "voxera-android"
             version = voxeraVersion
             afterEvaluate {
                 from(components["release"])

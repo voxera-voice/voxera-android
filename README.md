@@ -15,43 +15,28 @@ Kotlin SDK for the Voxera Voice Platform. New integrations should import
 
 ## Installation
 
-### From GitHub Packages
+### From JitPack
 
-The SDK is published to [GitHub Packages](https://github.com/voxera-voice/voxera-android/packages).
+The SDK is built and served by [JitPack](https://jitpack.io/#voxera-voice/voxera-android)
+from this repository's tags. No account or token is needed.
 
-**1. Add the GitHub Packages Maven repository** to your project-level `settings.gradle.kts`:
+**1. Add the JitPack repository** to your project-level `settings.gradle.kts`:
 
 ```kotlin
 dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven {
-            url = uri("https://maven.pkg.github.com/voxera-voice/voxera-android")
-            credentials {
-                username = providers.gradleProperty("gpr.user").orNull
-                    ?: System.getenv("GITHUB_ACTOR") ?: ""
-                password = providers.gradleProperty("gpr.token").orNull
-                    ?: System.getenv("GITHUB_TOKEN") ?: ""
-            }
-        }
+        maven { url = uri("https://jitpack.io") }
     }
 }
 ```
 
-**2. Store your token** in `~/.gradle/gradle.properties` (do **not** commit this).
-The token needs the `read:packages` scope:
-
-```properties
-gpr.user=<your-github-username>
-gpr.token=ghp_xxxxxxxxxxxxxxxxxxxx
-```
-
-**3. Add the dependency** to your module's `build.gradle.kts`:
+**2. Add the dependency** to your module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.voxera:voxera-sdk-android:1.1.42")
+    implementation("com.github.voxera-voice:voxera-android:1.1.43")
 }
 ```
 
@@ -570,34 +555,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
 ## Publishing a New Version
 
-To publish the SDK to GitHub Packages, set your GitHub token (needs the
-`write:packages` scope) and run the publish task from the SDK root:
+JitPack builds a release from a git tag, so publishing is tagging:
 
-```bash
-# Using environment variables
-export GITHUB_ACTOR=<your-github-username>
-export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
-./gradlew publishReleasePublicationToGitHubPackagesRepository
+1. Bump `voxeraVersion` in `build.gradle.kts`, and the pins in the React
+   Native and Flutter bridges to match.
+2. Push to `voxera-voice/voxera-android` and tag the commit with the version:
 
-# Or store permanently in ~/.gradle/gradle.properties
-# gpr.user=<your-github-username>
-# gpr.token=ghp_xxxxxxxxxxxxxxxxxxxx
-./gradlew publishReleasePublicationToGitHubPackagesRepository
-```
+   ```bash
+   git tag 1.1.43 && git push origin 1.1.43
+   ```
 
-To bump the version before publishing, update `version` in `build.gradle.kts`:
+3. Open `https://jitpack.io/#voxera-voice/voxera-android/1.1.43` (or request
+   the artifact) to trigger the build. `jitpack.yml` pins JDK 17 and runs
+   `./gradlew publishReleasePublicationToMavenLocal`, which you can run locally
+   first to catch a failing build before the tag is public.
 
-```kotlin
-publications {
-    create<MavenPublication>("release") {
-        groupId    = "com.voxera"
-        artifactId = "voxera-sdk-android"
-        version    = "1.1.42"  // ← bump this
-    }
-}
-```
-
-Published packages are visible at: https://github.com/voxera-voice/voxera-android/packages
+A tag, once built, is cached by JitPack; fix mistakes with a new version.
 
 ---
 
