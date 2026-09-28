@@ -1,0 +1,6 @@
+# JitPack builds this repository at each tag: https://jitpack.io/#voxera-voice/voxera-android
+# The Android Gradle Plugin in use needs JDK 17.
+jdk:
+  - openjdk17
+install:
+  - ./gradlew publishReleasePublicationToMavenLocal
