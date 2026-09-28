@@ -1,4 +1,4 @@
-package com.mayavoice.sdk
+package com.rocs.sdk
 
 import io.socket.client.IO
 import io.socket.client.Socket
@@ -8,7 +8,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
- * Handles all Socket.IO signaling with the Maya Voice media server.
+ * Handles all Socket.IO signaling with the Rocs media server.
  * Implements the same JSON protocol as the web SDK.
  */
 class SocketSignaling(private val serverUrl: String) {
@@ -19,6 +19,7 @@ class SocketSignaling(private val serverUrl: String) {
 
     var onNewProducer: ((producerId: String, source: String?) -> Unit)? = null
     var onConversationMessage: ((sessionId: String, role: String, content: String, timestamp: Long) -> Unit)? = null
+    var onMessage: ((JSONObject) -> Unit)? = null
     var onSpeakingStatusChanged: ((status: String) -> Unit)? = null
     var onServerError: ((message: String) -> Unit)? = null
     var onDisconnect: (() -> Unit)? = null
@@ -55,6 +56,11 @@ class SocketSignaling(private val serverUrl: String) {
     var onMinutesGenerated:     ((JSONObject) -> Unit)? = null
     var onBookmarkAdded:        ((JSONObject) -> Unit)? = null
     var onBookmarkRemoved:      ((JSONObject) -> Unit)? = null
+    /** The assistant called a tool. */
+    var onToolTriggered:        ((JSONObject) -> Unit)? = null
+    var onVolumeChanged:          ((volume: Double, isAI: Boolean) -> Unit)? = null
+    var onSearching:             ((JSONObject) -> Unit)? = null
+    var onClearAction:           ((List<String>, String) -> Unit)? = null
 
     // -----------------------------------------------------------------------
     // Internal state
@@ -69,7 +75,10 @@ class SocketSignaling(private val serverUrl: String) {
     suspend fun connect() = suspendCancellableCoroutine<Unit> { cont ->
         val opts = IO.Options.builder()
             .setTransports(arrayOf("websocket"))
-            .setReconnection(false)
+            .setReconnection(true)
+            .setReconnectionAttempts(3)
+            .setReconnectionDelay(1000)
+            .setReconnectionDelayMax(20000)
             .build()
 
         socket = IO.socket(serverUrl, opts)
@@ -81,7 +90,7 @@ class SocketSignaling(private val serverUrl: String) {
         socket.once(Socket.EVENT_CONNECT_ERROR) { args ->
             val msg = args.firstOrNull()?.toString() ?: "Socket connection error"
             if (cont.isActive) cont.resumeWithException(
-                MayaVoiceException(msg, MayaVoiceErrorCode.CONNECTION_FAILED)
+                RocsException(msg, RocsErrorCode.CONNECTION_FAILED)
             )
         }
 
@@ -111,6 +120,7 @@ class SocketSignaling(private val serverUrl: String) {
                 val response = args.firstOrNull()
                 when (response) {
                     is JSONObject -> if (cont.isActive) cont.resume(response)
+                    is org.json.JSONArray -> if (cont.isActive) cont.resume(JSONObject().put("_array", response))
                     null          -> if (cont.isActive) cont.resume(JSONObject())
                     else          -> if (cont.isActive) cont.resume(JSONObject().put("raw", response.toString()))
                 }
@@ -139,14 +149,31 @@ class SocketSignaling(private val serverUrl: String) {
 
         socket.on("new-producer") { args ->
             val d = args.firstOrNull() as? JSONObject ?: return@on
-            val producerId = d.optString("producerId")
+            // Current servers send "id"; older servers send "producerId".
+            val producerId = d.optString("id").ifEmpty { d.optString("producerId") }
             val source = if (d.has("source")) d.optString("source") else null
             onNewProducer?.invoke(producerId, source)
         }
 
+        // Streaming and final conversation messages share the 'message' event.
+        socket.on("message") { args ->
+            val d = args.firstOrNull() as? JSONObject ?: return@on
+            onMessage?.invoke(d)
+        }
+
+        // producer-closed event
+        socket.on("producer-closed") { _ -> /* handled internally */ }
+
         socket.on("server-error") { args ->
             val msg = (args.firstOrNull() as? JSONObject)?.optString("message") ?: "Unknown error"
             onServerError?.invoke(msg)
+        }
+
+        socket.on("volume-changed") { args ->
+            val d = args.firstOrNull() as? JSONObject ?: return@on
+            val volume = d.optDouble("volume", -100.0)
+            val isAI   = d.optBoolean("isAi", false)
+            onVolumeChanged?.invoke(volume, isAI)
         }
 
         registerMeetingListeners()
@@ -185,12 +212,25 @@ class SocketSignaling(private val serverUrl: String) {
             "minutes-generated"     to { d -> onMinutesGenerated?.invoke(d) },
             "bookmark-added"        to { d -> onBookmarkAdded?.invoke(d) },
             "bookmark-removed"      to { d -> onBookmarkRemoved?.invoke(d) },
+            "tool-triggered"        to { d -> onToolTriggered?.invoke(d) },
+            "searching"             to { d -> onSearching?.invoke(d) },
         )
         for ((event, handler) in events) {
             socket.on(event) { args ->
                 val d = args.firstOrNull() as? JSONObject ?: JSONObject()
                 handler?.invoke(d)
             }
+        }
+
+
+        // clear_action has a different signature — handled separately
+        socket.on("clear_action") { args ->
+            val d = args.firstOrNull() as? JSONObject ?: return@on
+            val jsonArray = d.optJSONArray("action_ids")
+            val actionIds = (0 until (jsonArray?.length() ?: 0)).map { jsonArray!!.optString(it) }
+            val sessionId = d.optString("sessionId", "")
+            android.util.Log.d("[Signaling]", "🔵 clear_action received – ids: $actionIds")
+            onClearAction?.invoke(actionIds, sessionId)
         }
     }
 }

@@ -1,8 +1,38 @@
-package com.mayavoice.sdk
+package com.rocs.sdk
 
 import org.json.JSONObject
 import org.webrtc.IceCandidate
 import org.webrtc.SessionDescription
+
+// ---------------------------------------------------------------------------
+// Tool Calls
+// ---------------------------------------------------------------------------
+
+data class ToolCallFunction(
+    val name: String,
+    val arguments: JSONObject
+) {
+    companion object {
+        fun fromJson(json: JSONObject): ToolCallFunction = ToolCallFunction(
+            name = json.optString("name", ""),
+            arguments = json.optJSONObject("arguments") ?: JSONObject()
+        )
+    }
+}
+
+data class ToolCall(
+    val id: String,
+    val type: String,
+    val function: ToolCallFunction
+) {
+    companion object {
+        fun fromJson(json: JSONObject): ToolCall = ToolCall(
+            id = json.optString("id", ""),
+            type = json.optString("type", "function"),
+            function = ToolCallFunction.fromJson(json.optJSONObject("function") ?: JSONObject())
+        )
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Status enums
@@ -17,7 +47,7 @@ enum class ConversationStatus {
 }
 
 enum class SpeakingStatus {
-    USER, AI, NONE
+    USER, AI, NONE, SEARCHING
 }
 
 // ---------------------------------------------------------------------------
@@ -26,9 +56,12 @@ enum class SpeakingStatus {
 
 data class ConversationMessage(
     val id: String,
+    val messageId: String = "",
     val role: MessageRole,
     val content: String,
     val timestamp: Long,  // epoch milliseconds
+    val fullText: String? = null,
+    val isFinal: Boolean = false,
     val metadata: Map<String, Any>? = null
 ) {
     enum class MessageRole { USER, ASSISTANT, SYSTEM }
@@ -52,7 +85,7 @@ data class WebRTCStats(
 // Error
 // ---------------------------------------------------------------------------
 
-enum class MayaVoiceErrorCode(val code: String) {
+enum class RocsErrorCode(val code: String) {
     CONNECTION_FAILED("CONNECTION_FAILED"),
     AUTHENTICATION_FAILED("AUTHENTICATION_FAILED"),
     WEBRTC_ERROR("WEBRTC_ERROR"),
@@ -64,9 +97,9 @@ enum class MayaVoiceErrorCode(val code: String) {
     UNKNOWN_ERROR("UNKNOWN_ERROR")
 }
 
-class MayaVoiceException(
+class RocsException(
     message: String,
-    val code: MayaVoiceErrorCode,
+    val code: RocsErrorCode,
     val details: Map<String, Any>? = null
 ) : Exception(message)
 

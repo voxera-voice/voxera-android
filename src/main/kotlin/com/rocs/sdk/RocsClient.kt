@@ -1,5 +1,6 @@
-package com.mayavoice.sdk
+package com.rocs.sdk
 
+import android.media.AudioManager
 import android.content.Context
 import kotlinx.coroutines.*
 import org.json.JSONObject
@@ -11,28 +12,28 @@ import org.webrtc.VideoTrack
  *
  * **Quick-start:**
  * ```kotlin
- * val config = MayaVoiceConfig(
+ * val config = RocsConfig(
  *     appKey = "YOUR_APP_KEY",
  *     serverUrl = "wss://media.example.com",
  *     chatConfig = ChatConfig(systemPrompt = "You are a helpful assistant.")
  * )
- * val client = MayaVoiceClient(context, config)
- * client.listener = object : MayaVoiceListener {
+ * val client = RocsClient(context, config)
+ * client.listener = object : RocsListener {
  *     override fun onConnectionStatusChanged(status: ConnectionStatus) { /* ... */ }
  *     override fun onMessage(message: ConversationMessage) { /* ... */ }
  * }
  * client.connect()
  * ```
  */
-class MayaVoiceClient(
+class RocsClient(
     private val context: Context,
-    private val config: MayaVoiceConfig,
+    private val config: RocsConfig,
 ) {
     // -----------------------------------------------------------------------
     // Public state
     // -----------------------------------------------------------------------
 
-    var listener: MayaVoiceListener? = null
+    var listener: RocsListener? = null
 
     var connectionStatus:   ConnectionStatus   = ConnectionStatus.IDLE;   private set
     var conversationStatus: ConversationStatus = ConversationStatus.IDLE; private set
@@ -40,8 +41,12 @@ class MayaVoiceClient(
     val messages:           MutableList<ConversationMessage> = mutableListOf()
     var sessionId:          String? = null; private set
 
+    var audioLevel:   Float = 0f; private set
+    var aiAudioLevel: Float = 0f; private set
+
     val isConnected          get() = connectionStatus == ConnectionStatus.CONNECTED
     val isConversationActive get() = conversationStatus == ConversationStatus.ACTIVE
+    var isMuted: Boolean = false; private set
 
     // Meeting state
     var roomMode:               RoomMode? = null;           private set
@@ -70,6 +75,9 @@ class MayaVoiceClient(
     private lateinit var webRTC: WebRTCManager
 
     private var reconnectAttempts = 0
+    private var routerRtpCapabilities: JSONObject? = null
+    private var manualDisconnect = false
+    private var previousAudioMode: Int? = null
 
     // -----------------------------------------------------------------------
     // Connect
@@ -79,55 +87,63 @@ class MayaVoiceClient(
         if (connectionStatus == ConnectionStatus.CONNECTED ||
             connectionStatus == ConnectionStatus.CONNECTING) return
 
+        manualDisconnect = false
         setConnectionStatus(ConnectionStatus.CONNECTING)
         scope.launch {
             try {
-                val session = initSession()
-                sessionId   = session.optString("sessionId").ifEmpty { null }
+                ensureCommunicationAudioMode()
+
+                // Generate the session ID client-side; no REST bootstrap is required.
+                sessionId = config.sessionId ?: java.util.UUID.randomUUID().toString()
 
                 signaling = SocketSignaling(config.serverUrl)
                 setupSignalingCallbacks()
                 setupMeetingSignalingCallbacks()
                 signaling.connect()
 
-                // init-session-connection
-                signaling.emitWithAck("init-session-connection", JSONObject().apply {
-                    put("sessionId", sessionId ?: "")
-                    put("appKey",    config.appKey)
-                    put("userId",    "android-user")
-                    put("enableVideoAI", config.videoConfig?.enableVideoAI ?: false)
-                })
+                // Initialize the managed voice-session connection.
+                signaling.emitWithAck("init-session-connection", buildSessionPayload())
 
                 // RTP capabilities
                 val rtpCaps = signaling.emitWithAck("getRtpCapabilities")
+                // Patch: add opus PT-101 for AI audio compatibility (matches web/iOS clients)
+                routerRtpCapabilities = patchRtpCapabilities(rtpCaps)
 
-                // WebRTC
+                // ICE servers — server returns a JSONArray directly
+                val iceResult = runCatching { signaling.emitWithAck("getIceServers") }.getOrNull()
+                val iceServers = iceResult?.optJSONArray("_array")
+                    ?: iceResult?.optJSONArray("servers")
+                android.util.Log.d("RocsClient", "ICE servers: $iceServers")
+
+                // WebRTC (mediasoup-client)
                 webRTC = WebRTCManager(context, signaling)
                 webRTC.init()
                 webRTC.onRemoteAudioTrack = { track -> handleRemoteAudioTrack(track) }
                 webRTC.onRemoteVideoTrack = { track -> handleRemoteVideoTrack(track) }
                 webRTC.onError = { err ->
-                    handleError(MayaVoiceException(err.message ?: "WebRTC error", MayaVoiceErrorCode.WEBRTC_ERROR))
+                    handleError(RocsException(err.message ?: "WebRTC error", RocsErrorCode.WEBRTC_ERROR))
                 }
 
-                // ICE servers
-                val iceResult = runCatching { signaling.emitWithAck("getIceServers") }.getOrNull()
-                val iceServers = iceResult?.optJSONArray("servers")
+                // Set ICE servers + load mediasoup Device
+                webRTC.setIceServers(iceServers)
+                webRTC.loadDevice(routerRtpCapabilities!!.toString())
 
                 // Send transport
                 val sendParams = signaling.emitWithAck("createTransport")
-                webRTC.createSendTransport(sendParams, iceServers)
-
-                // Recv transport
-                val recvParams = signaling.emitWithAck("createTransport")
-                webRTC.createRecvTransport(recvParams, iceServers)
+                webRTC.createSendTransport(sendParams)
 
                 // Produce audio
                 webRTC.produceAudio()
 
+                // Recv transport
+                val recvParams = signaling.emitWithAck("createTransport")
+                webRTC.createRecvTransport(recvParams)
+
+                // new-producer events are handled via setupSignalingCallbacks
+
                 setConnectionStatus(ConnectionStatus.CONNECTED)
             } catch (e: Exception) {
-                handleError(e as? MayaVoiceException ?: MayaVoiceException(e.message ?: "Unknown error", MayaVoiceErrorCode.UNKNOWN))
+                handleError(e as? RocsException ?: RocsException(e.message ?: "Unknown error", RocsErrorCode.UNKNOWN_ERROR))
                 setConnectionStatus(ConnectionStatus.ERROR)
             }
         }
@@ -136,7 +152,10 @@ class MayaVoiceClient(
     fun disconnect() {
         if (connectionStatus == ConnectionStatus.IDLE ||
             connectionStatus == ConnectionStatus.DISCONNECTED) return
+        manualDisconnect = true
         if (conversationStatus == ConversationStatus.ACTIVE) endConversation()
+        setMuted(true)
+        setSpeakingStatus(SpeakingStatus.NONE)
         cleanup()
         setConnectionStatus(ConnectionStatus.DISCONNECTED)
     }
@@ -157,22 +176,36 @@ class MayaVoiceClient(
     fun endConversation() {
         if (conversationStatus != ConversationStatus.ACTIVE) return
         setConversationStatus(ConversationStatus.ENDING)
+        setMuted(true)
+        setSpeakingStatus(SpeakingStatus.NONE)
         signaling.emit("conversation:end")
         setConversationStatus(ConversationStatus.IDLE)
     }
 
     fun sendMessage(content: String) {
-        if (!isConnected) throw MayaVoiceException("Not connected", MayaVoiceErrorCode.CONNECTION_FAILED)
+        if (!isConnected) throw RocsException("Not connected", RocsErrorCode.CONNECTION_FAILED)
         val message = ConversationMessage(
             id        = "msg_${System.currentTimeMillis()}_${(Math.random() * 9999).toInt()}",
-            role      = "user",
+            role      = ConversationMessage.MessageRole.USER,
             content   = content,
             timestamp = System.currentTimeMillis(),
+            isFinal   = true,
         )
         messages += message
         listener?.onMessage(message)
         config.listener?.onMessage(message)
-        signaling.emit("message:send", JSONObject().put("content", content))
+        signaling.emit("send-message", JSONObject().put("message", content))
+    }
+
+    fun selectAction(message: String, actionId: String) {
+        if (!isConnected) throw RocsException("Not connected", RocsErrorCode.CONNECTION_FAILED)
+        // `event` is echoed for older servers only; the current gateway reads
+        // just `action_id` and `message`.
+        signaling.emit("select-actions", JSONObject().apply {
+            put("message", message)
+            put("event", "tool-output")
+            put("action_id", actionId)
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -180,32 +213,54 @@ class MayaVoiceClient(
     // -----------------------------------------------------------------------
 
     fun setMuted(muted: Boolean) {
-        // Mute/unmute the local audio track directly
-        val conn = runCatching { webRTC }.getOrNull()
-        // AudioTrack muting is exposed via WebRTCManager if needed; fallback: no-op
+        isMuted = muted
+        runCatching { webRTC }.getOrNull()?.setAudioEnabled(!muted)
         listener?.onMuteChanged(muted)
         config.listener?.onMuteChanged(muted)
     }
+
+    fun toggleMute() = setMuted(!isMuted)
 
     // -----------------------------------------------------------------------
     // Video
     // -----------------------------------------------------------------------
 
-    fun enableVideo() {
+    /** Whether the local camera is currently active. */
+    val isVideoEnabled: Boolean get() = runCatching { webRTC.localVideoTrack != null }.getOrDefault(false)
+
+    /** The local camera VideoTrack (null when camera is off). */
+    val localVideoTrack: VideoTrack? get() = runCatching { webRTC.localVideoTrack }.getOrNull()
+
+    /** Whether the front camera is currently selected. */
+    val isFrontCamera: Boolean get() = runCatching { webRTC.isFrontCamera }.getOrDefault(true)
+
+    /** Shared EglBase for video rendering — pass to SurfaceViewRenderer.init(). */
+    val eglBase: org.webrtc.EglBase? get() = runCatching { webRTC.eglBase }.getOrNull()
+
+    fun startCamera(front: Boolean = true) {
         scope.launch {
             try {
-                // Use Camera2Capturer for the front camera (requires camera permission)
-                val capturer = org.webrtc.Camera2Capturer(context, getFrontCameraId(), null)
-                val producerId = webRTC.produceVideo(capturer)
-                // producerId available for logging / track management
+                webRTC.startCamera(front)
+                scope.launch(Dispatchers.Main) {
+                    listener?.onLocalVideoTrack(webRTC.localVideoTrack)
+                    config.listener?.onLocalVideoTrack(webRTC.localVideoTrack)
+                }
             } catch (e: Exception) {
-                handleError(MayaVoiceException("Video failed: ${e.message}", MayaVoiceErrorCode.MEDIA_ACCESS_DENIED))
+                handleError(RocsException("Video failed: ${e.message}", RocsErrorCode.MEDIA_ACCESS_DENIED))
             }
         }
     }
 
-    fun disableVideo() {
-        signaling.emit("track:disable", JSONObject().put("kind", "video"))
+    fun stopCamera() {
+        webRTC.stopCamera()
+        scope.launch(Dispatchers.Main) {
+            listener?.onLocalVideoTrack(null)
+            config.listener?.onLocalVideoTrack(null)
+        }
+    }
+
+    fun switchCamera() {
+        runCatching { webRTC.switchCamera() }
     }
 
     // -----------------------------------------------------------------------
@@ -241,40 +296,52 @@ class MayaVoiceClient(
                     put("roomId", roomId)
                     put("displayName", displayName)
                     put("appKey", config.appKey)
-                    put("configurationId", config.configurationId ?: "")
-                    put("roomMode", this@MayaVoiceClient.roomMode?.value ?: "ai-meeting")
-                    put("isHost", this@MayaVoiceClient.isHost)
+                    put("agentId", config.agentId ?: config.configurationId ?: "")
+                    put("roomMode", this@RocsClient.roomMode?.value ?: "ai-meeting")
+                    put("isHost", this@RocsClient.isHost)
                 })
 
                 setConnectionStatus(ConnectionStatus.CONNECTED)
             } catch (e: Exception) {
-                handleError(e as? MayaVoiceException ?: MayaVoiceException(e.message ?: "Unknown error", MayaVoiceErrorCode.UNKNOWN_ERROR))
+                handleError(e as? RocsException ?: RocsException(e.message ?: "Unknown error", RocsErrorCode.UNKNOWN_ERROR))
                 setConnectionStatus(ConnectionStatus.ERROR)
             }
         }
     }
 
     fun setupRoomWebRTC() {
-        if (!::signaling.isInitialized) throw MayaVoiceException("Socket not connected", MayaVoiceErrorCode.CONNECTION_FAILED)
+        if (!::signaling.isInitialized) throw RocsException("Socket not connected", RocsErrorCode.CONNECTION_FAILED)
         scope.launch {
             try {
+                ensureCommunicationAudioMode()
+
                 val rtpCaps = signaling.emitWithAck("getRtpCapabilities")
+                routerRtpCapabilities = patchRtpCapabilities(rtpCaps)
+
                 webRTC = WebRTCManager(context, signaling)
                 webRTC.init()
                 webRTC.onRemoteAudioTrack = { track -> handleRemoteAudioTrack(track) }
                 webRTC.onRemoteVideoTrack = { track -> handleRemoteVideoTrack(track) }
                 webRTC.onError = { err ->
-                    handleError(MayaVoiceException(err.message ?: "WebRTC error", MayaVoiceErrorCode.WEBRTC_ERROR))
+                    handleError(RocsException(err.message ?: "WebRTC error", RocsErrorCode.WEBRTC_ERROR))
                 }
+
                 val iceResult = runCatching { signaling.emitWithAck("getIceServers") }.getOrNull()
-                val iceServers = iceResult?.optJSONArray("servers")
+                val iceServers = iceResult?.optJSONArray("_array")
+                    ?: iceResult?.optJSONArray("servers")
+
+                webRTC.setIceServers(iceServers)
+                webRTC.loadDevice(routerRtpCapabilities!!.toString())
+
                 val sendParams = signaling.emitWithAck("createTransport")
-                webRTC.createSendTransport(sendParams, iceServers)
+                webRTC.createSendTransport(sendParams)
+
                 val recvParams = signaling.emitWithAck("createTransport")
-                webRTC.createRecvTransport(recvParams, iceServers)
+                webRTC.createRecvTransport(recvParams)
+
                 webRTC.produceAudio()
             } catch (e: Exception) {
-                handleError(MayaVoiceException("WebRTC setup failed: ${e.message}", MayaVoiceErrorCode.WEBRTC_ERROR))
+                handleError(RocsException("WebRTC setup failed: ${e.message}", RocsErrorCode.WEBRTC_ERROR))
             }
         }
     }
@@ -390,19 +457,26 @@ class MayaVoiceClient(
             val mapped = when (status) {
                 "user-speaking" -> SpeakingStatus.USER
                 "ai-speaking"   -> SpeakingStatus.AI
+                "searching"     -> SpeakingStatus.SEARCHING
                 else            -> SpeakingStatus.NONE
             }
             setSpeakingStatus(mapped)
         }
 
         signaling.onConversationMessage = { sessionId, role, content, timestamp ->
+            val roleEnum = ConversationMessage.MessageRole.values().firstOrNull {
+                it.name.equals(role, ignoreCase = true)
+            } ?: ConversationMessage.MessageRole.ASSISTANT
             val msg = ConversationMessage(
                 id        = "${role}_$timestamp",
-                role      = role,
+                messageId = "${role}_$timestamp",
+                role      = roleEnum,
                 content   = content,
                 timestamp = timestamp,
+                isFinal   = true,
             )
             messages += msg
+            if (speakingStatus == SpeakingStatus.SEARCHING) setSpeakingStatus(SpeakingStatus.NONE)
             scope.launch(Dispatchers.Main) {
                 listener?.onMessage(msg)
                 config.listener?.onMessage(msg)
@@ -410,29 +484,73 @@ class MayaVoiceClient(
         }
 
         signaling.onNewProducer = { producerId, source ->
-            if (source == "ai") {
-                scope.launch {
-                    try {
-                        val consumeParams = signaling.emitWithAck("consume", JSONObject().apply {
-                            put("producerId", producerId)
-                            put("transportId", "")
-                            put("rtpCapabilities", JSONObject())
-                        })
-                        webRTC.consumeAI(consumeParams)
-                    } catch (e: Exception) {
-                        handleError(MayaVoiceException("Consume failed: ${e.message}", MayaVoiceErrorCode.WEBRTC_ERROR))
-                    }
+            scope.launch {
+                try {
+                    val consumeParams = signaling.emitWithAck("consume", JSONObject().apply {
+                        put("producerId", producerId)
+                        put("transportId", webRTC.getRecvTransportId() ?: "")
+                        put("rtpCapabilities", routerRtpCapabilities ?: JSONObject())
+                    })
+                    webRTC.consumeAI(consumeParams)
+                } catch (e: Exception) {
+                    handleError(RocsException("Consume failed: ${e.message}", RocsErrorCode.WEBRTC_ERROR))
+                }
+            }
+        }
+
+        // Streaming and final conversation messages share the 'message' event.
+        signaling.onMessage = { d ->
+            val roleStr = d.optString("role", "assistant")
+            val role = ConversationMessage.MessageRole.values().firstOrNull {
+                it.name.equals(roleStr, ignoreCase = true)
+            } ?: ConversationMessage.MessageRole.ASSISTANT
+            val content = if (d.has("content")) d.optString("content") else d.optString("text", "")
+            val isFinal = d.optBoolean("isFinal", false) || d.has("output")
+            val fullText = if (d.has("fullText")) d.optString("fullText") else null
+            val messageId = d.optString("messageId", "msg_${System.currentTimeMillis()}")
+            val msg = ConversationMessage(
+                id        = d.optString("id", "msg_${System.currentTimeMillis()}"),
+                messageId = messageId,
+                role      = role,
+                content   = content,
+                timestamp = System.currentTimeMillis(),
+                fullText  = fullText,
+                isFinal   = isFinal,
+            )
+            messages += msg
+            if (speakingStatus == SpeakingStatus.SEARCHING) setSpeakingStatus(SpeakingStatus.NONE)
+            scope.launch(Dispatchers.Main) {
+                listener?.onMessage(msg)
+                config.listener?.onMessage(msg)
+            }
+        }
+
+        signaling.onVolumeChanged = { volume, isAI ->
+            // Server sends dBFS (range ~ -100…0). Normalize to 0…1 for UI.
+            val clamped = maxOf(minOf(volume, 0.0), -100.0).toFloat()
+            val level = (clamped + 100f) / 100f
+            if (isAI) {
+                aiAudioLevel = level
+                scope.launch(Dispatchers.Main) {
+                    listener?.onAIAudioLevel(level)
+                    config.listener?.onAIAudioLevel(level)
+                }
+            } else {
+                audioLevel = level
+                scope.launch(Dispatchers.Main) {
+                    listener?.onAudioLevel(level)
+                    config.listener?.onAudioLevel(level)
                 }
             }
         }
 
         signaling.onServerError = { message ->
-            handleError(MayaVoiceException(message, MayaVoiceErrorCode.UNKNOWN))
+            handleError(RocsException(message, RocsErrorCode.UNKNOWN_ERROR))
         }
 
         signaling.onDisconnect = {
             val opts = config.connectionOptions
-            if (opts.autoReconnect && reconnectAttempts < opts.reconnectAttempts) {
+            if (!manualDisconnect && opts.autoReconnect && reconnectAttempts < opts.reconnectAttempts) {
                 setConnectionStatus(ConnectionStatus.RECONNECTING)
                 reconnectAttempts++
                 scope.launch {
@@ -683,30 +801,95 @@ class MayaVoiceClient(
                 listener?.onMeetingEvent("bookmark-removed", d)
             }
         }
+        signaling.onToolTriggered = { d ->
+            val content = d.optJSONObject("content")
+            if (content != null) {
+                val actionId = content.optString("action_id", "")
+                val name = content.optString("name", "")
+                val args = content.optJSONObject("arguments") ?: JSONObject()
+                val tool = ToolCall(
+                    id = actionId,
+                    type = "function",
+                    function = ToolCallFunction(name = name, arguments = args)
+                )
+                scope.launch(Dispatchers.Main) {
+                    listener?.onToolCalls(listOf(tool), "")
+                    config.listener?.onToolCalls(listOf(tool), "")
+                }
+            }
+        }
+        signaling.onClearAction = { actionIds, sessionId ->
+            android.util.Log.d("RocsClient", "🔵 clear_action – ids: $actionIds, sessionId: $sessionId")
+            scope.launch(Dispatchers.Main) {
+                listener?.onClearAction(actionIds, sessionId)
+                config.listener?.onClearAction(actionIds, sessionId)
+            }
+        }
+
+        signaling.onSearching = { d ->
+            val query = d.optString("query", "")
+            scope.launch(Dispatchers.Main) {
+                listener?.onSearching(query)
+                config.listener?.onSearching(query)
+            }
+        }
     }
 
     private suspend fun initSession(): JSONObject {
-        val apiUrl = config.serverUrl
-            .replace("wss://", "https://")
-            .replace("ws://",  "http://")
+        // Kept for backward compatibility; no longer called from connect().
+        return JSONObject()
+    }
 
-        return withContext(Dispatchers.IO) {
-            val url = java.net.URL("$apiUrl/api/session/init")
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type",  "application/json")
-            conn.setRequestProperty("X-API-Key",     config.appKey)
-            conn.doOutput = true
-            val body = JSONObject().apply { put("configurationId", config.configurationId ?: "") }
-            conn.outputStream.write(body.toString().toByteArray())
-            if (conn.responseCode != 200) {
-                throw MayaVoiceException("Session init failed (${conn.responseCode})", MayaVoiceErrorCode.AUTHENTICATION_FAILED)
-            }
-            val response = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
-            val json = JSONObject(response)
-            json.optJSONObject("data") ?: json
+    private fun buildSessionPayload(): JSONObject = JSONObject().apply {
+        put("protocol",     "voxera")
+        put("protocolVersion", "1.0")
+        put("sessionId",    sessionId ?: "")
+        put("threadId",     config.threadId ?: sessionId ?: "")
+        put("chatProfile",  config.chatProfile ?: "")
+        put("userId",       config.userId ?: "android-user")
+        put("clientType",   "android")
+        put("appKey",       config.appKey)
+        put("agentId",      config.agentId ?: config.configurationId ?: "")
+        config.user?.let          { put("user", JSONObject(it)) }
+        config.ttsConfig?.let     { put("ttsConfig", JSONObject(it)) }
+        config.transcriptionConfig?.let { put("transcriptionConfig", JSONObject(it)) }
+        config.modelConfig?.let { put("modelConfig", JSONObject(it)) }
+        config.tools?.let { put("tools", org.json.JSONArray(it.map { tool -> JSONObject(tool) })) }
+        config.additionalSystemPrompts?.let { put("additionalSystemPrompts", org.json.JSONArray(it)) }
+        config.initialMessages?.let { put("initialMessages", org.json.JSONArray(it.map { m -> JSONObject(m) })) }
+        config.selectedModel?.let { put("selectedModel", it) }
+        config.selectedVoice?.let { put("selectedVoice", it) }
+        config.workspaceId?.let   { put("workspaceId", it) }
+        config.username?.let      { put("username", it) }
+        config.userInfo?.let      { put("userInfo", JSONObject(it)) }
+        config.metadata?.takeIf { it.isNotEmpty() }?.let { put("metadata", JSONObject(it)) }
+        config.language?.takeIf { it.isNotBlank() }?.let { put("language", it) }
+        val iso8601 = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US)
+        iso8601.timeZone = java.util.TimeZone.getDefault()
+        put("clientDateTime", iso8601.format(java.util.Date()))
+    }
+
+    /**
+     * Patch RTP capabilities: add opus PT-101 copy for AI audio compatibility.
+     * Mirrors the web and iOS patchRtpCapabilities logic.
+     */
+    private fun patchRtpCapabilities(rtpCaps: JSONObject): JSONObject {
+        val codecs = rtpCaps.optJSONArray("codecs") ?: return rtpCaps
+        // Check if PT-101 already exists
+        for (i in 0 until codecs.length()) {
+            if (codecs.getJSONObject(i).optInt("preferredPayloadType", -1) == 101) return rtpCaps
         }
+        // Find first opus codec and add a copy with PT-101
+        for (i in 0 until codecs.length()) {
+            val c = codecs.getJSONObject(i)
+            if (c.optString("mimeType", "").equals("audio/opus", ignoreCase = true)) {
+                val copy = JSONObject(c.toString())
+                copy.put("preferredPayloadType", 101)
+                codecs.put(copy)
+                break
+            }
+        }
+        return rtpCaps
     }
 
     private fun handleRemoteAudioTrack(track: AudioTrack) {
@@ -723,7 +906,7 @@ class MayaVoiceClient(
         }
     }
 
-    private fun handleError(e: MayaVoiceException) {
+    private fun handleError(e: RocsException) {
         scope.launch(Dispatchers.Main) {
             listener?.onError(e)
             config.listener?.onError(e)
@@ -754,19 +937,11 @@ class MayaVoiceClient(
         }
     }
 
-    private fun getFrontCameraId(): String {
-        val manager = context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
-        for (id in manager.cameraIdList) {
-            val chars = manager.getCameraCharacteristics(id)
-            val facing = chars.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
-            if (facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT) return id
-        }
-        return manager.cameraIdList.firstOrNull() ?: throw MayaVoiceException("No camera found", MayaVoiceErrorCode.MEDIA_ACCESS_DENIED)
-    }
-
     private fun cleanup() {
         runCatching { webRTC.cleanup() }
         runCatching { signaling.disconnect() }
+        restorePreviousAudioMode()
+        reconnectAttempts = 0
         messages.clear()
         sessionId = null
         // Reset meeting state
@@ -784,5 +959,32 @@ class MayaVoiceClient(
         askAiTextResponse = ""
         isAskAiTextProcessing = false
         scope.coroutineContext.cancelChildren()
+    }
+
+    private fun ensureCommunicationAudioMode() {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        if (previousAudioMode == null) {
+            previousAudioMode = audioManager.mode
+        }
+        if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        }
+        logAudioMode("ensureCommunicationAudioMode")
+    }
+
+    private fun restorePreviousAudioMode() {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val mode = previousAudioMode ?: return
+        audioManager.mode = mode
+        previousAudioMode = null
+        logAudioMode("restorePreviousAudioMode")
+    }
+
+    private fun logAudioMode(label: String) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        android.util.Log.d(
+            "RocsClient",
+            "[$label] mode=${audioManager.mode}, speakerOn=${audioManager.isSpeakerphoneOn}, btScoOn=${audioManager.isBluetoothScoOn}"
+        )
     }
 }
