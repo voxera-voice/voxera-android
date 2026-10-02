@@ -599,4 +599,4 @@ The SDK uses **mediasoup-client-android** for WebRTC transport (SFU architecture
 
 ## License
 
-Proprietary. All rights reserved.
+MIT — see [LICENSE](LICENSE).

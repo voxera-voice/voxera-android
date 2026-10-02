@@ -91,7 +91,7 @@ publishing {
 
                 licenses {
                     license {
-                        name.set("Voxera Commercial License")
+                        name.set("MIT License")
                         url.set("https://github.com/voxera-voice/voxera-android/blob/main/LICENSE")
                         distribution.set("repo")
                     }
@@ -101,7 +101,7 @@ publishing {
                     developer {
                         id.set("voxera")
                         name.set("Voxera")
-                        email.set("support@voxera.ai")
+                        email.set("voicevoxera@gmail.com")
                     }
                 }
 
