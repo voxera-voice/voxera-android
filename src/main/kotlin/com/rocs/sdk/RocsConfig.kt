@@ -80,8 +80,19 @@ interface RocsListener {
 // Main SDK configuration
 // ---------------------------------------------------------------------------
 
+/**
+ * Set exactly one credential: [sessionToken] (recommended) or [appKey].
+ *
+ * @property appKey Publishable key (`vx_pk_*`). Its only restriction is an
+ *   origin allowlist, which a native app cannot enforce: anyone who extracts
+ *   the key from the APK can open sessions on your account. Prefer
+ *   [sessionToken] in production.
+ * @property sessionToken Short-lived token your backend mints with its secret
+ *   key at `POST /api/v1/sessions/token`. The token is bound to the
+ *   `sessionId` returned alongside it, so pass that as [sessionId] too.
+ */
 data class RocsConfig(
-    val appKey: String,
+    val appKey: String? = null,
     val serverUrl: String,
     @Deprecated("Use agentId instead") val configurationId: String? = null,
     val agentId: String? = null,
@@ -133,4 +144,16 @@ data class RocsConfig(
      * was configured with.
      */
     val language: String? = null,
-)
+    val sessionToken: String? = null,
+) {
+    init {
+        val hasKey = !appKey.isNullOrEmpty()
+        val hasToken = !sessionToken.isNullOrEmpty()
+        require(hasKey != hasToken) {
+            "RocsConfig needs exactly one of appKey or sessionToken"
+        }
+        require(!hasToken || !sessionId.isNullOrEmpty()) {
+            "RocsConfig.sessionToken requires the sessionId it was minted for"
+        }
+    }
+}

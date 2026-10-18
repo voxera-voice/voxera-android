@@ -36,7 +36,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.voxera-voice:voxera-android:1.1.43")
+    implementation("com.github.voxera-voice:voxera-android:1.1.44")
 }
 ```
 
@@ -84,10 +84,11 @@ Add the following to your `AndroidManifest.xml`:
 ```kotlin
 import com.voxera.sdk.*
 
-// 1. Configure
+// 1. Configure — `token` and `sessionId` come from your backend (see "Credentials")
 val config = VoxeraConfig(
-    appKey    = "YOUR_APP_KEY",
-    serverUrl = "https://your-server.example.com",
+    sessionToken = token,
+    sessionId    = sessionId,
+    serverUrl    = "https://your-server.example.com",
 )
 
 // 2. Create client
@@ -186,13 +187,47 @@ This sends:
 
 ---
 
+## Credentials
+
+**Use a session token minted by your backend.** Your backend holds a secret
+key (`vx_sk_*`) and exchanges it for a short-lived token bound to one session;
+the app receives only that token and its `sessionId`.
+
+```bash
+# Your backend — never in the app
+curl -X POST https://api.voxera-voice.com/api/v1/sessions/token \
+  -H "authorization: Bearer $VOXERA_SECRET_KEY" \
+  -H "content-type: application/json" \
+  -d '{"agentId": "your-agent-id", "endUserId": "user-123"}'
+# → { "token": "...", "sessionId": "...", "expiresAt": "...", ... }
+```
+
+Pass both `sessionToken` and the `sessionId` that came back with it: the token
+is bound to that session and the server refuses it under any other. It lasts
+five minutes by default and only has to be valid when the call starts, so mint
+one right before each call. Set exactly one of `sessionToken` or `appKey`.
+
+A publishable key (`appKey`, `vx_pk_*`) also works, but its only protection is
+a web-origin allowlist, which means nothing to a native app: a key used from an
+app either has no allowlist or one any client satisfies by sending the matching
+header. Anyone who unpacks your APK can lift it and spend your tenant's
+voice minutes and concurrent-call slots. Keep it to prototypes and internal
+builds. Never put a secret key in an app.
+
+`VoxeraConfig` throws `IllegalArgumentException` when it does not have exactly
+one credential, or has a `sessionToken` without a `sessionId`.
+
+---
+
 ## Configuration
 
 ### `VoxeraConfig`
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `appKey` | `String` | — | **Required.** Your application key. |
+| `sessionToken` | `String?` | `null` | Short-lived token from your backend. Set this or `appKey`. See [Credentials](#credentials). |
+| `sessionId` | `String?` | `null` | **Required with `sessionToken`** — the `sessionId` returned with it. Otherwise generated per call. |
+| `appKey` | `String?` | `null` | Publishable key (`vx_pk_*`). Set this or `sessionToken`; prototypes only. |
 | `serverUrl` | `String` | — | **Required.** Media server URL. |
 | `userId` | `String?` | `null` | User identifier for session continuity. |
 | `threadId` | `String?` | `null` | Thread identifier for conversation continuity. |
@@ -338,7 +373,8 @@ interface VoxeraListener {
 
 ```kotlin
 val config = VoxeraConfig(
-    appKey    = "YOUR_APP_KEY",
+    sessionToken = token,             // from your backend
+    sessionId = sessionId,            // returned with the token
     serverUrl = "https://your-server.example.com",
     userId    = "user-123",           // optional, for session continuity
     threadId  = "thread-abc",         // optional, for conversation continuity
@@ -479,8 +515,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val isVideoEnabled: Boolean = false,
     )
 
-    fun startCall(appKey: String, serverUrl: String) {
-        val config = VoxeraConfig(appKey = appKey, serverUrl = serverUrl)
+    fun startCall(token: String, sessionId: String, serverUrl: String) {
+        val config = VoxeraConfig(sessionToken = token, sessionId = sessionId, serverUrl = serverUrl)
         client = VoxeraClient(getApplication(), config).apply {
             listener = object : VoxeraListener {
                 override fun onConnectionStatusChanged(status: ConnectionStatus) {
@@ -562,10 +598,10 @@ JitPack builds a release from a git tag, so publishing is tagging:
 2. Push to `voxera-voice/voxera-android` and tag the commit with the version:
 
    ```bash
-   git tag 1.1.43 && git push origin 1.1.43
+   git tag 1.1.44 && git push origin 1.1.44
    ```
 
-3. Open `https://jitpack.io/#voxera-voice/voxera-android/1.1.43` (or request
+3. Open `https://jitpack.io/#voxera-voice/voxera-android/1.1.44` (or request
    the artifact) to trigger the build. `jitpack.yml` pins JDK 17 and runs
    `./gradlew publishReleasePublicationToMavenLocal`, which you can run locally
    first to catch a failing build before the tag is public.

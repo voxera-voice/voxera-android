@@ -6,7 +6,7 @@ plugins {
 
 // Must match the version the React Native and Flutter bridges pin, and the
 // tag pushed to voxera-voice/voxera-android. Three places, one value.
-val voxeraVersion = "1.1.43"
+val voxeraVersion = "1.1.44"
 
 android {
     namespace = "com.voxera.sdk"

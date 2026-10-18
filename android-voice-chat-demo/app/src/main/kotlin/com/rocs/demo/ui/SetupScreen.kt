@@ -53,7 +53,8 @@ fun SetupScreen(viewModel: ChatViewModel) {
 
     val actualUrl = viewModel.actualServerUrl
     val isValidUrl = actualUrl.startsWith("http://") || actualUrl.startsWith("https://")
-    val canStart = isValidUrl
+    // RocsConfig refuses a config with no credential.
+    val canStart = isValidUrl && state.appKey.isNotBlank()
 
     Box(Modifier.fillMaxSize().background(BgDark)) {
         Column(

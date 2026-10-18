@@ -12,10 +12,12 @@ import org.webrtc.VideoTrack
  *
  * **Quick-start:**
  * ```kotlin
+ * // `token` and `sessionId` come from your backend's
+ * // POST /api/v1/sessions/token call.
  * val config = RocsConfig(
- *     appKey = "YOUR_APP_KEY",
+ *     sessionToken = token,
+ *     sessionId = sessionId,
  *     serverUrl = "wss://media.example.com",
- *     chatConfig = ChatConfig(systemPrompt = "You are a helpful assistant.")
  * )
  * val client = RocsClient(context, config)
  * client.listener = object : RocsListener {
@@ -295,7 +297,7 @@ class RocsClient(
                 signaling.emitWithAck("join-room", JSONObject().apply {
                     put("roomId", roomId)
                     put("displayName", displayName)
-                    put("appKey", config.appKey)
+                    config.appKey?.let { put("appKey", it) }
                     put("agentId", config.agentId ?: config.configurationId ?: "")
                     put("roomMode", this@RocsClient.roomMode?.value ?: "ai-meeting")
                     put("isHost", this@RocsClient.isHost)
@@ -848,7 +850,8 @@ class RocsClient(
         put("chatProfile",  config.chatProfile ?: "")
         put("userId",       config.userId ?: "android-user")
         put("clientType",   "android")
-        put("appKey",       config.appKey)
+        config.appKey?.takeIf { it.isNotEmpty() }?.let { put("appKey", it) }
+        config.sessionToken?.takeIf { it.isNotEmpty() }?.let { put("sessionToken", it) }
         put("agentId",      config.agentId ?: config.configurationId ?: "")
         config.user?.let          { put("user", JSONObject(it)) }
         config.ttsConfig?.let     { put("ttsConfig", JSONObject(it)) }
